@@ -17,11 +17,19 @@
 package org.wso2.carbon.governance.registry.extensions.utils;
 
 import org.apache.axiom.om.OMElement;
+import org.apache.axiom.om.impl.builder.StAXOMBuilder;
 import org.apache.axiom.om.util.AXIOMUtil;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
+import org.wso2.carbon.CarbonException;
+import org.wso2.carbon.governance.api.exception.GovernanceException;
 import org.wso2.carbon.governance.api.util.GovernanceArtifactConfiguration;
 import org.wso2.carbon.governance.api.util.GovernanceConstants;
+import org.wso2.carbon.governance.common.utils.GovernanceUtils;
 import org.wso2.carbon.registry.core.Collection;
 import org.wso2.carbon.registry.core.Registry;
 import org.wso2.carbon.registry.core.RegistryConstants;
@@ -35,23 +43,33 @@ import org.wso2.carbon.registry.extensions.services.RXTStoragePathServiceImpl;
 import org.wso2.carbon.registry.extensions.utils.CommonConstants;
 import org.wso2.carbon.utils.CarbonUtils;
 import org.wso2.carbon.utils.FileUtil;
+import org.xml.sax.SAXException;
 
 import javax.cache.Cache;
 import javax.xml.namespace.QName;
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.parsers.ParserConfigurationException;
 import javax.xml.stream.XMLStreamException;
-import java.io.File;
-import java.io.FilenameFilter;
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Iterator;
-import java.util.List;
+import java.io.*;
+import java.util.*;
 
 import static org.wso2.carbon.governance.api.util.GovernanceUtils.getGovernanceArtifactConfiguration;
 import static org.wso2.carbon.governance.api.util.GovernanceUtils.getRXTConfigCache;
 
 public class CommonUtil {
+
     private static final Log log = LogFactory.getLog(CommonUtil.class);
+
+    private final static Map<String, HashMap<String, String>>
+            associationConfigMap = new HashMap<>();
+    private final static Map<String, HashMap<String, String>>
+            reverseAssociationConfigMap = new HashMap<>();
+    public static final String REVERSE_ASSOCIATION = "reverseAssociation";
+    public static final String TYPE = "type";
+    public static final String ASSOCIATION_CONFIG = "AssociationConfig";
+
+    private static int dependencyGraphMaxDepth = -1;
 
 	private static RXTStoragePathService rxtSPService;
 
@@ -167,6 +185,7 @@ public class CommonUtil {
     }
 
     public static void addRxtConfigs(Registry systemRegistry, int tenantId) throws RegistryException {
+        loadAssociationConfig();
         Cache<String,Boolean> rxtConfigCache = getRXTConfigCache(GovernanceConstants.RXT_CONFIG_CACHE_ID);
         String rxtDir = CarbonUtils.getCarbonHome() + File.separator + "repository" + File.separator +
                 "resources" + File.separator + "rxts";
@@ -252,6 +271,160 @@ public class CommonUtil {
                 throw new RegistryException(msg, e);
             }
         }
+    }
+
+    /**
+     * This method reads the Association Config xml and populates the association and reverse association map.
+     */
+    public static void loadAssociationConfig() {
+        String associationConfigFile =
+                CarbonUtils.getCarbonConfigDirPath() + File.separator + GovernanceUtils.GOVERNANCE_CONFIG_FILE;
+        DocumentBuilderFactory dbFactory = DocumentBuilderFactory.newInstance();
+
+        try {
+            DocumentBuilder dBuilder = dbFactory.newDocumentBuilder();
+            Document doc = dBuilder.parse(new File(associationConfigFile));
+            doc.getDocumentElement().normalize();
+            NodeList associationConfigNode = doc.getElementsByTagName(ASSOCIATION_CONFIG);
+            NodeList nodeList = associationConfigNode.item(0).getChildNodes();
+
+            for (int i = 0; i < nodeList.getLength(); i++) {
+                Node association = nodeList.item(i);
+                if (association.getNodeType() == Node.ELEMENT_NODE) {
+                    HashMap<String, String> associationMap = new HashMap<>();
+                    HashMap<String, String> reverseAssociationMap = new HashMap<>();
+                    NodeList childNodeList = association.getChildNodes();
+
+                    if (childNodeList != null) {
+                        for (int j = 0; j < childNodeList.getLength(); j++) {
+                            Node types = childNodeList.item(j);
+                            if (types.getNodeType() == Node.ELEMENT_NODE) {
+                                associationMap.put(types.getNodeName(), types.getFirstChild().getNodeValue());
+                                if (((Element) types).hasAttribute(REVERSE_ASSOCIATION)) {
+                                    reverseAssociationMap.put(types.getNodeName(),
+                                            ((Element) types).getAttribute(REVERSE_ASSOCIATION));
+                                }
+                            }
+                        }
+                    }
+                    associationConfigMap.put(((Element) association).getAttribute(TYPE), associationMap);
+                    reverseAssociationConfigMap.put(((Element) association).getAttribute(TYPE), reverseAssociationMap);
+                }
+            }
+        } catch (FileNotFoundException e) {
+            log.error("Failed to find the governance.xml", e);
+        } catch (ParserConfigurationException | SAXException e) {
+            log.error("Failed to parse the governance.xml", e);
+        } catch (IOException e) {
+            log.error("Error while reading the governance.xml", e);
+        }
+    }
+
+    /**
+     * This method is used by greg-publisher-api.js to read the association configuration map.
+     * @param shortName     short name of the artifact type.
+     * @return              map containing association type as key and
+     */
+    public static HashMap<String, String> getAssociationConfig(String shortName){
+        if(associationConfigMap.size() == 0){
+            log.warn("Failed to find association mappings");
+            return null;
+        }
+        if(associationConfigMap.containsKey(shortName)){
+            return associationConfigMap.get(shortName);
+        }else{
+            return null;
+        }
+    }
+
+    /**
+     * This method is used by greg-publisher-api.js to read the reverse association type for a given short name and
+     * association type.
+     * @param shortName         short name of the artifact type.
+     * @param associationType   association type from source asset to destination asset.
+     * @return                  reverse association type from destination asset to source asset.
+     */
+    public static String getReverseAssociationType(String shortName, String associationType){
+        if(reverseAssociationConfigMap.size() == 0){
+            log.warn("Failed to find reverse association mappings");
+            return null;
+        }
+        if(reverseAssociationConfigMap.containsKey(shortName) && reverseAssociationConfigMap.get(shortName)
+                .containsKey(associationType)){
+            return reverseAssociationConfigMap.get(shortName).get(associationType);
+        }else{
+            return null;
+        }
+    }
+
+    /**
+     * This method is used by greg-publisher-api.js to read the reverse association type for a given short name and
+     * association type when removing the bi-directional association. If the association removal is done from the
+     * destination asset, then this method will determine association type from source asset to destination asset.
+     * @param shortName         short name of the artifact type.
+     * @param associationType   association type from source asset to destination asset.
+     * @return                  reverse association type from source asset to destination asset.
+     */
+    public static String getAssociationTypeForRemoveOperation (String shortName, String
+            associationType){
+        if(reverseAssociationConfigMap.size() == 0){
+            log.warn("Failed to find association mappings");
+            return null;
+        }
+        String reverseAssociationType = null;
+        if(reverseAssociationConfigMap.containsKey(shortName)){
+            for (Map.Entry<String, String> entry : reverseAssociationConfigMap.get(shortName).entrySet()){
+                if(associationType.equals(entry.getValue())) {
+                    reverseAssociationType = entry.getKey();
+                    break;
+                }
+            }
+            return reverseAssociationType;
+        }else{
+            return null;
+        }
+    }
+
+    public static void loadDependencyGraphMaxDepthConfig() {
+        FileInputStream fileInputStream = null;
+        try {
+            fileInputStream = new FileInputStream(getConfigFile());
+            StAXOMBuilder builder = new StAXOMBuilder(
+                    CarbonUtils.replaceSystemVariablesInXml(fileInputStream));
+            OMElement configElement = builder.getDocumentElement();
+            OMElement dependencyGraphMaxDepthConfig = configElement.getFirstChildWithName(
+                    new QName("dependencyGraphMaxDepth"));
+            if (dependencyGraphMaxDepthConfig != null) {
+                dependencyGraphMaxDepth = Integer.parseInt(dependencyGraphMaxDepthConfig.getText());
+            }
+        } catch (FileNotFoundException | GovernanceException e) {
+            log.error("Failed to find the registry.xml", e);
+        } catch (CarbonException e) {
+            log.error("Could not replace system variables in registry.xml", e);
+        } catch (XMLStreamException e) {
+            log.error("could not build registry.xml OM", e);
+        }
+    }
+
+    // Get registry.xml instance.
+    private static File getConfigFile() throws GovernanceException {
+        String configPath = CarbonUtils.getRegistryXMLPath();
+        if (configPath != null) {
+            File registryXML = new File(configPath);
+            if (!registryXML.exists()) {
+                String msg = "Registry configuration file (registry.xml) file does " +
+                        "not exist in the path " + configPath;
+                throw new GovernanceException(msg);
+            }
+            return registryXML;
+        } else {
+            String msg = "Cannot find registry.xml";
+            throw new GovernanceException(msg);
+        }
+    }
+
+    public static int getDependencyGraphMaxDepth(){
+        return dependencyGraphMaxDepth;
     }
 
     public static void addStoragePath(String mediaType, String storagePath) {

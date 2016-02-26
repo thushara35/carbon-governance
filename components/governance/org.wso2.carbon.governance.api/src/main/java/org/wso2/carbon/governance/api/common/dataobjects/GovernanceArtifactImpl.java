@@ -31,7 +31,13 @@ import org.wso2.carbon.registry.core.exceptions.RegistryException;
 import org.wso2.carbon.registry.core.session.UserRegistry;
 
 import javax.xml.namespace.QName;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Governance Artifact abstract class, This is overwritten by Endpoint, Policy, Schema, Service,
@@ -49,6 +55,16 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
     private String lcName;
     private String lcState;
     private String artifactPath;
+    private List<String> uniqueAttributes;
+
+
+    public List<String> getUniqueAttributes() {
+        return uniqueAttributes;
+    }
+
+    public void setUniqueAttributes(List<String> uniqueAttributes) {
+        this.uniqueAttributes = uniqueAttributes;
+    }
 
     public String getLcName() {
         return lcName;
@@ -80,6 +96,11 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
     protected Map<String, List<String>> attributes = new HashMap<String, List<String>>();
 
     /**
+     * Map of properties associated with this governance artifact.
+     */
+    protected Map<String, List<String>> properties = new HashMap<String, List<String>>();
+
+    /**
      * Construct a governance artifact object from the path and the id.
      *
      * @param id the id
@@ -103,8 +124,10 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
     protected GovernanceArtifactImpl(GovernanceArtifactImpl artifact) {
         if (artifact != null) {
             this.attributes = artifact.attributes;
+            this.properties = artifact.properties;
             this.lcName = artifact.lcName;
             this.lcState = artifact.lcState;
+            this.uniqueAttributes = artifact.uniqueAttributes;
 //            if (artifact.checkListItemBeans != null) {
 //                this.checkListItemBeans = Arrays.copyOf(artifact.checkListItemBeans, artifact.checkListItemBeans.length);
 //            }
@@ -120,6 +143,11 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
         }
     }
 
+    protected GovernanceArtifactImpl(GovernanceArtifactImpl artifact,  List<String> uniqueAttributes) {
+       this(artifact);
+       setUniqueAttributes(uniqueAttributes);
+    }
+
     /**
      * Constructor accepting resource identifier and the XML content.
      *
@@ -130,6 +158,11 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
     public GovernanceArtifactImpl(String id, OMElement contentElement) throws GovernanceException {
         this(id);
         serializeToAttributes(contentElement, null);
+    }
+
+    public GovernanceArtifactImpl(String id, OMElement contentElement, List<String> uniqueAttributes) throws GovernanceException {
+        this(id, contentElement);
+        setUniqueAttributes(uniqueAttributes);
     }
 
     // Method to serialize attributes.
@@ -174,6 +207,9 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
             public QName getQName() {
                 return null;
             }
+            public void setQName(QName qName) throws GovernanceException {
+
+            }
         };
     }
 
@@ -187,7 +223,24 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
             public QName getQName() {
                 return null;
             }
+            public void setQName (QName qName)  throws GovernanceException {}
         };
+    }
+
+    public static GovernanceArtifactImpl create(final Registry registry, final String artifactId,
+                                                final List<String> uniqueAttributes)
+                                                throws GovernanceException {
+        GovernanceArtifactImpl artifact = create(registry, artifactId);
+        artifact.setUniqueAttributes(uniqueAttributes);
+        return artifact;
+    }
+
+    public static GovernanceArtifactImpl create(final Registry registry, final String artifactId,
+                                                final OMElement content, List<String> uniqueAttributes)
+                                                throws GovernanceException {
+        GovernanceArtifactImpl artifact = create(registry, artifactId, content);
+        artifact.setUniqueAttributes(uniqueAttributes);
+        return artifact;
     }
 
     /**
@@ -224,6 +277,27 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
             path = GovernanceUtils.getArtifactPath(registry, id);
         }
         return path;
+    }
+
+    public String getMediaType() {
+        if(path == null) {
+            try {
+                path = getPath();
+            } catch (GovernanceException ex) {
+                log.error("An error occurred while obtaining the path of artifact " + ex);
+                return null;
+            }
+        }
+        if(path != null) {
+            try {
+                if (registry.resourceExists(path)) {
+                    return registry.get(path).getMediaType();
+                }
+            } catch(RegistryException ex) {
+                log.error("An error occurred obtaining the media type of the artifact " + ex);
+            }
+        }
+        return null;
     }
 
     /**
@@ -476,12 +550,22 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
      */
     @Override
     public void addAttribute(String key, String value) throws GovernanceException {
-        List<String> values = attributes.get(key);
-        if (values == null) {
-            values = new ArrayList<String>();
-            attributes.put(key, values);
+        boolean isAttribute = key.contains(".");
+        if (!isAttribute) {
+            List<String> values = attributes.get(key);
+            if (values == null) {
+                values = new ArrayList<String>();
+                attributes.put(key, values);
+            }
+            values.add(value);
+        } else {
+            List<String> values = properties.get(key);
+            if (values == null) {
+                values = new ArrayList<String>();
+                properties.put(key, values);
+            }
+            values.add(value);
         }
-        values.add(value);
     }
 
     /**
@@ -494,9 +578,20 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
      */
     @Override
     public void setAttributes(String key, String[] newValues) throws GovernanceException {
-        List<String> values = new ArrayList<String>();
-        values.addAll(Arrays.asList(newValues));
-        attributes.put(key, values);
+        boolean isAttribute = key.contains(".");
+        if (!isAttribute) {
+            List<String> values = new ArrayList<String>();
+            values.addAll(Arrays.asList(newValues));
+            attributes.put(key, values);
+        } else {
+            List<String> values = properties.get(key);
+            if (values == null) {
+                values = new ArrayList<String>();
+                properties.put(key, values);
+            }
+            values.addAll(Arrays.asList(newValues));
+        }
+
     }
 
     /**
@@ -512,9 +607,20 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
      */
     @Override
     public void setAttribute(String key, String newValue) throws GovernanceException {
-        List<String> values = new ArrayList<String>();
-        values.add(newValue);
-        attributes.put(key, values);
+        boolean isAttribute = key.contains(".");
+        if (!isAttribute) {
+            List<String> values = new ArrayList<String>();
+            values.add(newValue);
+            attributes.put(key, values);
+        } else {
+            List<String> values = properties.get(key);
+            if (values == null) {
+                values = new ArrayList<String>();
+                properties.put(key, values);
+            }
+            values.add(newValue);
+        }
+
     }
 
     /**
@@ -527,11 +633,21 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
      */
     @Override
     public String getAttribute(String key) throws GovernanceException {
-        List<String> values = attributes.get(key);
-        if (values == null || values.size() == 0) {
-            return null;
+        boolean isAttribute = key.contains(".");
+        if (!isAttribute) {
+            List<String> values = attributes.get(key);
+            if (values == null || values.size() == 0) {
+                return null;
+            }
+            return values.get(0);
+        } else {
+            List<String> values = properties.get(key);
+            if (values == null || values.size() == 0) {
+                return null;
+            }
+            return values.get(0);
         }
-        return values.get(0);
+
     }
 
     /**
@@ -555,11 +671,20 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
      */
     @Override
     public String[] getAttributes(String key) throws GovernanceException {
-        List<String> values = attributes.get(key);
-        if (values == null) {
-            return null; //TODO: This should return String[0]
+        boolean isAttribute = key.contains(".");
+        if (!isAttribute) {
+            List<String> values = attributes.get(key);
+            if (values == null) {
+                return null; //TODO: This should return String[0]
+            }
+            return values.toArray(new String[values.size()]);
+        } else {
+            List<String> values = properties.get(key);
+            if (values == null) {
+                return null; //TODO: This should return String[0]
+            }
+            return values.toArray(new String[values.size()]);
         }
-        return values.toArray(new String[values.size()]);
     }
 
     /**
@@ -570,7 +695,13 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
      */
     @Override
     public void removeAttribute(String key) throws GovernanceException {
-        attributes.remove(key);
+        boolean isAttribute = key.contains(".");
+        if (!isAttribute) {
+            attributes.remove(key);
+        } else {
+            properties.remove(key);
+        }
+
     }
 
     /**
@@ -689,9 +820,9 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
             }
             registry.invokeAspect(getArtifactPath(), aspectName, action, parameters);
         } catch (RegistryException e) {
-            String msg = "Invoking lifecycle action \"" + action + "\" failed";
+            String msg = "Invoking lifecycle action \"" + action + "\" failed. " + e.getMessage();
             log.error(msg, e);
-            throw new GovernanceException(msg, e);
+            throw new GovernanceException(e.getMessage(), e);
         }
     }
 
@@ -921,7 +1052,7 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
      * @param attachedToArtifact the artifact the current artifact is attached to
      * @throws GovernanceException throws if the operation failed.
      */
-    protected void attach(GovernanceArtifact attachedToArtifact) throws GovernanceException {
+    public void attach(GovernanceArtifact attachedToArtifact) throws GovernanceException {
         checkRegistryResourceAssociation();
         // uses the path from the getter to make sure the used overloaded method
         String path = getPath();
@@ -952,7 +1083,7 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
      * @param artifactId the artifact id of the attached artifact
      * @throws GovernanceException throws if the operation failed.
      */
-    protected void detach(String artifactId) throws GovernanceException {
+    public void detach(String artifactId) throws GovernanceException {
         checkRegistryResourceAssociation();
         // uses the path from the getter to make sure the used overloaded method
         String path = getPath();
@@ -1024,4 +1155,214 @@ public abstract class GovernanceArtifactImpl implements GovernanceArtifact {
         }
     }
 
+    /**
+     * Returns the available attribute keys
+     *
+     * @return an array of attribute keys.
+     * @throws GovernanceException throws if the operation failed.
+     */
+    @Override
+    public String[] getPropertyKeys() throws GovernanceException {
+        Set<String> attributeKeys = properties.keySet();
+        return attributeKeys.toArray(new String[attributeKeys.size()]);
+    }
+
+    @Override
+    public boolean equals(Object artifact) {
+        GovernanceArtifact governanceArtifact ;
+        if(!(artifact instanceof GovernanceArtifact)) {
+            return false;
+        } else {
+            governanceArtifact = (GovernanceArtifact) artifact;
+        }
+
+        return governanceArtifact.getId().equals(this.getId());
+    }
+
+    @Override
+    public void attach(String artifactId) throws GovernanceException {
+        throw new UnsupportedOperationException("Not yet Implemented");
+    }
+
+    @Override
+    public void addAssociation(String associationType, GovernanceArtifact attachedToArtifact)
+            throws GovernanceException {
+        checkRegistryResourceAssociation();
+        // uses the path from the getter to make sure the used overloaded method
+        String path = getPath();
+        String attachedToArtifactPath = attachedToArtifact.getPath();
+        if (attachedToArtifactPath == null) {
+            String msg = "'Attached to artifact' is not associated with a registry path.";
+            log.error(msg);
+            throw new GovernanceException(msg);
+        }
+        try {
+            registry.addAssociation(path, attachedToArtifactPath, associationType);
+        } catch (RegistryException e) {
+            StringBuilder stringBuilder = new StringBuilder();
+            stringBuilder.append("Error in attaching the artifact. source id: ")
+                    .append(id)
+                    .append(", path: ")
+                    .append(path)
+                    .append(", target id: ")
+                    .append(attachedToArtifact.getId())
+                    .append(", path:")
+                    .append(attachedToArtifactPath)
+                    .append(", attachment type: ")
+                    .append(attachedToArtifact.getClass().getName());
+            throw new GovernanceException(stringBuilder.toString(), e);
+        }    }
+
+    @Override
+    public void addAssociation(String associationType, String artifactId) throws GovernanceException {
+        throw new UnsupportedOperationException("Not yet Implemented");
+    }
+
+    @Override
+    public void addBidirectionalAssociation(String forwardType, String backwardType,
+                                            GovernanceArtifact attachedToArtifact) throws GovernanceException {
+        checkRegistryResourceAssociation();
+        // uses the path from the getter to make sure the used overloaded method
+        String path = getPath();
+        String attachedToArtifactPath = attachedToArtifact.getPath();
+        if (attachedToArtifactPath == null) {
+            String msg = "'Attached to artifact' is not associated with a registry path.";
+            log.error(msg);
+            throw new GovernanceException(msg);
+        }
+        try {
+            registry.addAssociation(path, attachedToArtifactPath, forwardType);
+            registry.addAssociation(attachedToArtifactPath, path, backwardType);
+        } catch (RegistryException e) {
+            StringBuilder stringBuilder = new StringBuilder();
+            stringBuilder.append("Error in attaching the artifact. source id: ")
+                    .append(id)
+                    .append(", path: ")
+                    .append(path)
+                    .append(", target id: ")
+                    .append(attachedToArtifact.getId())
+                    .append(", path:")
+                    .append(attachedToArtifactPath)
+                    .append(", attachment type: ")
+                    .append(attachedToArtifact.getClass().getName());
+            throw new GovernanceException(stringBuilder.toString(), e);
+        }
+    }
+
+    @Override
+    public void removeAssociation(String associationType, String artifactId) throws GovernanceException {
+        throw new UnsupportedOperationException("Not yet Implemented");
+    }
+
+    @Override
+    public void removeAssociation(String artifactId) throws GovernanceException {
+        throw new UnsupportedOperationException("Not yet Implemented");
+    }
+
+    @Override
+    public Map<String, List<GovernanceArtifact>> getAssociations() throws GovernanceException {
+        throw new UnsupportedOperationException("Not yet Implemented");
+    }
+
+    @Override
+    public Map<String, List<String>> getAssociatedArtifactIds() throws GovernanceException {
+        throw new UnsupportedOperationException("Not yet Implemented");
+    }
+
+    @Override
+    public boolean isRegistryAwareArtifact() {
+        try {
+            checkRegistryResourceAssociation();
+            return true;
+        } catch (GovernanceException e) {
+            return false;
+        }
+    }
+
+    @Override
+    public void addTag(String tag) throws GovernanceException {
+        throw new UnsupportedOperationException("Not yet Implemented");
+    }
+
+    @Override
+    public void addTags(List<String> tags) throws GovernanceException {
+        throw new UnsupportedOperationException("Not yet Implemented");
+    }
+
+    @Override
+    public List<String> listTags() throws GovernanceException {
+        throw new UnsupportedOperationException("Not yet Implemented");
+    }
+
+    @Override
+    public void removeTag(String tag) throws GovernanceException {
+        throw new UnsupportedOperationException("Not yet Implemented");
+    }
+
+    @Override
+    public void removeTags(List<String> tags) throws GovernanceException {
+        throw new UnsupportedOperationException("Not yet Implemented");
+    }
+
+    @Override
+    public String toString() {
+        return "GovernanceArtifactImpl{" +
+               "attributes=" + attributes +
+               ", id='" + id + '\'' +
+               '}';
+    }
+
+    public boolean uniqueTo(GovernanceArtifact artifact) {
+        if (artifact != null) {
+            List<String> uAttributes = getUniqueAttributes(artifact);
+            if (this == artifact || this.equals(artifact)) {
+                return true;
+            } else if (uAttributes != null && uAttributes.size() > 0) {
+                try {
+                    for (String attributeName : uAttributes) {
+                        if (this.getAttribute(attributeName) != null && artifact.getAttribute(attributeName) !=
+                                                                        null && !this.getAttribute(attributeName).equals
+                                (artifact.getAttribute(attributeName))) {
+                            return false;
+                        }
+                    }
+                    //all unique attributes are same
+                    return true;
+                } catch (GovernanceException e) {
+                    log.error(e);
+                }
+            }
+        }
+        return false;
+    }
+
+    private List<String> getUniqueAttributes(GovernanceArtifact artifact) {
+        if(this.uniqueAttributes != null){
+            return uniqueAttributes;
+        } else if(artifact instanceof GovernanceArtifactImpl){
+            return ((GovernanceArtifactImpl)artifact).getUniqueAttributes();
+        }
+        return null;
+    }
+
+    public boolean compareTo(GovernanceArtifact artifact) {
+        if (artifact != null) {
+            if (this == artifact || this.equals(artifact)) {
+                return true;
+            } else {
+                try {
+                    for (String key : this.getAttributeKeys()) {
+                        if (!this.getAttribute(key).equals(artifact.getAttribute(key))) {
+                            return false;
+                        }
+                    }
+                    //all unique attributes are same
+                    return true;
+                } catch (GovernanceException e) {
+                    log.error(e);
+                }
+            }
+        }
+        return false;
+    }
 }

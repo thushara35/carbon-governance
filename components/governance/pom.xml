@@ -20,7 +20,7 @@
     <parent>
         <groupId>org.wso2.carbon.governance</groupId>
         <artifactId>carbon-governance</artifactId>
-        <version>4.3.1-SNAPSHOT</version>
+        <version>4.6.2-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
 
@@ -32,6 +32,7 @@
 
     <modules>
         <module>org.wso2.carbon.governance.api</module>
+        <module>org.wso2.carbon.governance.common</module>
         <module>org.wso2.carbon.governance.sramp</module>
         <module>org.wso2.carbon.governance.registry.extensions</module>
         <module>org.wso2.carbon.governance.registry.eventing</module>
@@ -44,6 +45,7 @@
         <module>org.wso2.carbon.governance.generic</module>
         <module>org.wso2.carbon.governance.gadgetsource</module>
         <module>org.wso2.carbon.governance.gadgets.ui</module>
+	<module>org.wso2.carbon.governance.metadata</module>
         <module>org.wso2.carbon.governance.notifications.ui</module>
         <module>org.wso2.carbon.governance.lcm</module>
         <module>org.wso2.carbon.governance.lcm.ui</module>
@@ -52,5 +54,7 @@
         <module>org.wso2.carbon.governance.list.ui</module>
         <module>org.wso2.carbon.governance.gadgets</module>
         <module>org.wso2.carbon.governance.client</module>
+        <module>org.wso2.carbon.governance.comparator</module>
+        <module>org.wso2.carbon.governance.rest.api</module>
     </modules>
 </project>

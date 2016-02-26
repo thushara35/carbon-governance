@@ -1,3 +1,19 @@
+/*
+ * Copyright (c) 2015, WSO2 Inc. (http://www.wso2.org) All Rights Reserved.
+ *
+ *   Licensed under the Apache License, Version 2.0 (the "License");
+ *   you may not use this file except in compliance with the License.
+ *   You may obtain a copy of the License at
+ *
+ *        http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *   Unless required by applicable law or agreed to in writing, software
+ *   distributed under the License is distributed on an "AS IS" BASIS,
+ *   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *   See the License for the specific language governing permissions and
+ *   limitations under the License.
+ */
+
 package org.wso2.carbon.governance.registry.extensions.executors.utils;
 
 import org.wso2.carbon.governance.api.util.GovernanceConstants;
@@ -114,6 +130,11 @@ public class ExecutorConstants {
      * Defines the APIM endpoint(used to publish the service as API)
      */
     public static final String APIM_PASSWORD = "apim.password";
+
+    /**
+     * Defines the APIM publisher local or external to Governance Registry
+     */
+    public static final String APIM_PUBLISHER = "apim.publisher";
     
     /**
      * Defines the body of the web service request
@@ -199,11 +220,11 @@ public class ExecutorConstants {
     public static final String API_TIER = "tiersCollection";
     public static final String API_STATUS = "status";
     public static final String API_PUBLISHED_STATUS = "CREATED";
-    public static final String API_THROTTLING_TIER="resourceMethodThrottlingTier-";
+    public static final String API_THROTTLING_TIER="resourceMethodThrottlingTier-0";
 
-    public static final String API_URI_PATTERN ="uriTemplate-";
-    public static final String API_URI_HTTP_METHOD ="resourceMethod-";
-    public static final String API_URI_AUTH_TYPE ="resourceMethodAuthType-";
+    public static final String API_URI_PATTERN ="uriTemplate-0";
+    public static final String API_URI_HTTP_METHOD ="resourceMethod-0";
+    public static final String API_URI_AUTH_TYPE ="resourceMethodAuthType-0";
 	public static final String API_RESOURCE_COUNT = "resourceCount";
 	public static final String API_ENDPOINT_CONFIG = "endpoint_config";
     public static final String API_ACTION = "action";
@@ -232,5 +253,28 @@ public class ExecutorConstants {
 	public static final String APIM_LOGIN_UNDEFINED = "APIManager login credentials are not defined";
 	public static final String ENCODING_FAIL = "Failed when encoding the parameter list. ";
 
+    //API Manager 2.0.0 constants
+    public static final String DESIGN_API_ACTION = "design";
+    public static final String API_OVERVIEW_NAME = "overview_name";
+    public static final String API_OVERVIEW_PROVIDR = "overview_provider";
+    public static final String API_OVERVIEW_VERSION = "overview_version";
+    public static final String API_OVERVIEW_CONTEXT = "overview_context";
+    public static final String API_VISIBILITY = "visibility";
+    public static final String API_ROLES = "roles";
+    public static final String API_OVERVIEW_THUMBNAIL = "overview_thumbnail";
+    public static final String API_OVERVIEW_DESCRIPTION = "overview_description";
+    public static final String API_OVERVIEW_TAGS = "overview_tags";
+    public static final String API_SWAGGER = "swagger";
+    public static final String API_URL_PATTERNS = "uritemplate_urlPattern";
+    public static final String API_URL_HTTPVERB = "uritemplate_httpVerb";
+    public static final String API_URL_AUTHTYPE = "security_authenticationType";
+    public static final String ACTION = "action";
+    public static final String DEFAULT_SWAGGER_DOC = "{\"paths\":{\"/*\":{\"put\":{\"responses\":{\"200\":{}}},"
+                                                     + "\"post\":{\"responses\":{\"200\":{}}},"
+                                                     + "\"get\":{\"responses\":{\"200\":{}}},"
+                                                     + "\"delete\":{\"responses\":{\"200\":{}}},"
+                                                     + "\"head\":{\"responses\":{\"200\":{}}}}},\"swagger\":\"2.0\","
+                                                     + "\"info\":{\"title\":\"\",\"version\":\"\"}}\n";
+    public static final String DEFAULT_ENDPOINT_ENV = "Default";
 
 }

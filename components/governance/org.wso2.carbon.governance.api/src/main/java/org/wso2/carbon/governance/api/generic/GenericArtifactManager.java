@@ -25,10 +25,12 @@ import org.apache.commons.logging.LogFactory;
 import org.wso2.carbon.governance.api.common.GovernanceArtifactManager;
 import org.wso2.carbon.governance.api.common.dataobjects.GovernanceArtifact;
 import org.wso2.carbon.governance.api.exception.GovernanceException;
+import org.wso2.carbon.governance.api.generic.dataobjects.DetachedGenericArtifactImpl;
 import org.wso2.carbon.governance.api.generic.dataobjects.GenericArtifact;
 import org.wso2.carbon.governance.api.generic.dataobjects.GenericArtifactImpl;
 import org.wso2.carbon.governance.api.util.GovernanceArtifactConfiguration;
 import org.wso2.carbon.governance.api.util.GovernanceUtils;
+import org.wso2.carbon.registry.common.TermData;
 import org.wso2.carbon.registry.core.Association;
 import org.wso2.carbon.registry.core.Registry;
 import org.wso2.carbon.registry.core.exceptions.RegistryException;
@@ -273,6 +275,29 @@ public class GenericArtifactManager {
     }
 
     /**
+     * Find all possible terms and its count for the given facet field and query criteria
+     * @param criteria the filter criteria to be matched
+     * @param facetField field used for faceting
+     * @param authRequired authorization required flag
+     * @return term results
+     * @throws GovernanceException
+     */
+    public TermData[] getTermData(Map<String, List<String>> criteria, String facetField, boolean authRequired) throws GovernanceException {
+        return manager.getTermData(criteria, facetField, authRequired);
+    }
+
+    /**
+     * Finds and returns GenericArtifact instances matching the search query
+     *
+     * @param query The query string that needs to be searched for
+     * @return The GenericArtifact list that matching the query
+     * @throws GovernanceException if the operation failed
+     */
+    public GenericArtifact[] findGovernanceArtifacts(String query) throws GovernanceException {
+        return getGenericArtifacts(manager.findGovernanceArtifacts(query));
+    }
+
+    /**
      * Finds all artifacts matching the given filter criteria.
      *
      * @param criteria the filter criteria to be matched.
@@ -348,6 +373,28 @@ public class GenericArtifactManager {
      */
     public String[] getAllGenericArtifactIds() throws GovernanceException {
         return manager.getAllGovernanceArtifactIds();
+    }
+
+
+    public static GenericArtifact newDetachedGovernanceArtifact(QName artifactName,String mediaType ){
+        return new DetachedGenericArtifactImpl(artifactName ,mediaType);
+    }
+
+    /**
+     * Check whether GovernanceArtifact is exists in the Registry without loading whole artifact into memory.
+     * This method only work for Configurable Governance Artifacts and doe not work for Content Artifacts such
+     * as WSDL, WADL, Swagger, XMLSchema etc.
+     *
+     * @param artifact GovernanceArtifact to check it's existence.
+     * @return true or false
+     * @throws GovernanceException if the operation failed.
+     */
+    public boolean isExists(GovernanceArtifact artifact) throws GovernanceException {
+        return manager.isExists(artifact);
+    }
+
+    public void removeGenericArtifact(GenericArtifact artifact) throws GovernanceException {
+        manager.removeGenericArtifact(artifact);
     }
 
 }

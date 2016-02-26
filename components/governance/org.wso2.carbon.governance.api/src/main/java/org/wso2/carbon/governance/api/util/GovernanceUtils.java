@@ -19,6 +19,7 @@ import org.apache.axiom.om.OMElement;
 import org.apache.axiom.om.impl.builder.StAXOMBuilder;
 import org.apache.axiom.om.util.AXIOMUtil;
 import org.apache.axiom.om.xpath.AXIOMXPath;
+import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.jaxen.JaxenException;
@@ -43,6 +44,7 @@ import org.wso2.carbon.governance.api.wsdls.dataobjects.Wsdl;
 import org.wso2.carbon.governance.api.wsdls.dataobjects.WsdlImpl;
 import org.wso2.carbon.registry.common.AttributeSearchService;
 import org.wso2.carbon.registry.common.ResourceData;
+import org.wso2.carbon.registry.common.TermData;
 import org.wso2.carbon.registry.core.Association;
 import org.wso2.carbon.registry.core.Registry;
 import org.wso2.carbon.registry.core.RegistryConstants;
@@ -50,16 +52,23 @@ import org.wso2.carbon.registry.core.Resource;
 import org.wso2.carbon.registry.core.config.RegistryContext;
 import org.wso2.carbon.registry.core.exceptions.RegistryException;
 import org.wso2.carbon.registry.core.jdbc.handlers.RequestContext;
+import org.wso2.carbon.registry.core.secure.AuthorizationFailedException;
 import org.wso2.carbon.registry.core.service.RegistryService;
 import org.wso2.carbon.registry.core.session.UserRegistry;
 import org.wso2.carbon.registry.core.utils.MediaTypesUtils;
 import org.wso2.carbon.registry.core.utils.RegistryUtils;
 import org.wso2.carbon.registry.core.utils.UUIDGenerator;
 import org.wso2.carbon.registry.extensions.utils.CommonUtil;
+import org.wso2.carbon.registry.indexing.IndexingConstants;
+import org.wso2.carbon.registry.indexing.service.TermsSearchService;
 import org.wso2.carbon.utils.component.xml.config.ManagementPermission;
 import org.wso2.carbon.utils.multitenancy.MultitenantConstants;
 import org.wso2.carbon.utils.multitenancy.MultitenantUtils;
 
+import java.io.StringReader;
+import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.cache.Cache;
 import javax.cache.CacheManager;
 import javax.cache.Caching;
@@ -67,10 +76,6 @@ import javax.xml.namespace.QName;
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
-import java.io.StringReader;
-import java.util.*;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Utilities used by various Governance API related functionality.
@@ -78,6 +83,8 @@ import java.util.regex.Pattern;
 public class GovernanceUtils {
 
     private static final Log log = LogFactory.getLog(GovernanceUtils.class);
+    private static final String OVERVIEW = "overview";
+    private static final String UNDERSCORE = "_";
     private static RegistryService registryService;
     //private static final String SEPARATOR = ":";
     private final static Map<Integer, List<GovernanceArtifactConfiguration>>
@@ -94,6 +101,8 @@ public class GovernanceUtils {
     private final static RXTConfigCacheEntryRemovedListener<String, Boolean> entryRemovedListener = new RXTConfigCacheEntryRemovedListener<String, Boolean>();
     private final static RXTConfigCacheEntryUpdatedListener<String, Boolean> entryUpdatedListener = new RXTConfigCacheEntryUpdatedListener<String, Boolean>();
     private static boolean rxtCacheInitiated = false;
+
+    private static TermsSearchService termsSearchService;
     /**
      * Setting the registry service.
      *
@@ -194,7 +203,7 @@ public class GovernanceUtils {
             String mediaType, Registry registry)
             throws RegistryException {
 
-        List<GovernanceArtifactConfiguration> governanceArtifactConfigurations = artifactConfigurations.get(PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantId());
+        List<GovernanceArtifactConfiguration> governanceArtifactConfigurations = artifactConfigurations.get(((UserRegistry) registry).getTenantId());
 
         if (governanceArtifactConfigurations == null) {
             governanceArtifactConfigurations = findGovernanceArtifactConfigurations(registry);
@@ -219,7 +228,7 @@ public class GovernanceUtils {
             String key, Registry registry)
             throws RegistryException {
 
-        List<GovernanceArtifactConfiguration> governanceArtifactConfigurations = artifactConfigurations.get(PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantId());
+        List<GovernanceArtifactConfiguration> governanceArtifactConfigurations = artifactConfigurations.get(((UserRegistry) registry).getTenantId());
 
         if (governanceArtifactConfigurations == null) {
             governanceArtifactConfigurations = findGovernanceArtifactConfigurations(registry);
@@ -379,6 +388,12 @@ public class GovernanceUtils {
                     configuration.setLifecycle(lifecycleElement.getText());
                 }
 
+                OMElement groupingAttributeElement = configElement.getFirstChildWithName(
+                        new QName("groupingAttribute"));
+                if (groupingAttributeElement != null) {
+                    configuration.setGroupingAttribute(groupingAttributeElement.getText());
+                }
+
                 OMElement lifecycleContextsElement = configElement.getFirstChildWithName(new QName("lifecycleContexts"));
                 if(lifecycleContextsElement != null) {
                     Iterator lifecycleContextsIterator = lifecycleContextsElement.getChildrenWithName(new QName("lifecycleContext"));
@@ -523,6 +538,26 @@ public class GovernanceUtils {
             configurations.add(getGovernanceArtifactConfiguration(elementString));
         }
         return configurations;
+    }
+
+    /**
+     * Method to return the GovernanceArtifactConfiguration for a given media type
+     *
+     * @param registry the registry instance to run query on.
+     * @param mediaType mediatype of the needed artifact configuration
+     * @return GovernanceArtifactConfiguration
+     * @throws RegistryException exception thorown if something goes wrong
+     */
+    public static GovernanceArtifactConfiguration getArtifactConfigurationByMediaType(Registry registry, String mediaType) throws RegistryException {
+        List<GovernanceArtifactConfiguration> configurations = findGovernanceArtifactConfigurations(registry);
+
+        for(GovernanceArtifactConfiguration configuration : configurations) {
+            if(configuration.getMediaType().equals(mediaType)) {
+                return configuration;
+            }
+        }
+
+        return null;
     }
 
     @SuppressWarnings("unused")
@@ -676,9 +711,15 @@ public class GovernanceUtils {
     public static String getArtifactPath(Registry registry, String artifactId)
             throws GovernanceException {
     	Cache<String, String> cache;
-    	try{
+        UserRegistry userRegistry = (UserRegistry) registry;
+        //This is temp fix to identify remote calls. Will move cache initialization logic into registry core
+        // with next major carbon(ex:4.5.0) release.
+        if (userRegistry.getUserRealm() == null) {
+            return getDirectArtifactPath(registry, artifactId);
+        }
+        try{
     		PrivilegedCarbonContext.startTenantFlow();
-            PrivilegedCarbonContext.getThreadLocalCarbonContext().setTenantId(((UserRegistry) registry).getTenantId());
+            PrivilegedCarbonContext.getThreadLocalCarbonContext().setTenantId(userRegistry.getTenantId());
             String tenantDomain  = PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantDomain(true);
             if (tenantDomain == null) {            	
             	tenantDomain = MultitenantUtils.getTenantDomain(((UserRegistry) registry).getUserName());
@@ -903,7 +944,16 @@ public class GovernanceUtils {
         try {
             Resource artifactResource;
             if (registry.resourceExists(artifactPath)) {
-                artifactResource = registry.get(artifactPath);
+                try {
+                    artifactResource = registry.get(artifactPath);
+                } catch (AuthorizationFailedException e) {
+                    // if the the user does not have access to the specified path, we are returning null.
+                    if (log.isDebugEnabled()) {
+                        String msg = "User does not have access to path " + artifactPath + ".";
+                        log.debug(msg);
+                    }
+                    return null;
+                }
                 artifactLC = artifactResource.getProperty("registry.LC.name");
 
                 if (artifactLC != null) {
@@ -920,12 +970,14 @@ public class GovernanceUtils {
             String artifactId =
                     artifactResource.getUUID();
             String mediaType = artifactResource.getMediaType();
+            List<String> uniqueAttributes = getUniqueAttributesNames(registry, mediaType);
             if (GovernanceConstants.WSDL_MEDIA_TYPE
                     .equals(mediaType)) {
                 Wsdl wsdl = new WsdlImpl(artifactId, registry);
                 ((WsdlImpl) wsdl).setLcName(artifactLC);
                 ((WsdlImpl) wsdl).setLcState(artifactLCState);
                 ((WsdlImpl) wsdl).setArtifactPath(artifactPath);
+                ((WsdlImpl) wsdl).setUniqueAttributes(uniqueAttributes);
                 if (artifactCache != null) {
                     artifactCache.addArtifact(artifactPath, wsdl);
                 }
@@ -936,6 +988,7 @@ public class GovernanceUtils {
                 ((SchemaImpl) schema).setLcName(artifactLC);
                 ((SchemaImpl) schema).setLcState(artifactLCState);
                 ((SchemaImpl) schema).setArtifactPath(artifactPath);
+                ((SchemaImpl) schema).setUniqueAttributes(uniqueAttributes);
                 if (artifactCache != null) {
                     artifactCache.addArtifact(artifactPath, schema);
                 }
@@ -946,6 +999,7 @@ public class GovernanceUtils {
                 ((PolicyImpl) policy).setLcName(artifactLC);
                 ((PolicyImpl) policy).setLcState(artifactLCState);
                 ((PolicyImpl) policy).setArtifactPath(artifactPath);
+                ((PolicyImpl) policy).setUniqueAttributes(uniqueAttributes);
                 if (artifactCache != null) {
                     artifactCache.addArtifact(artifactPath, policy);
                 }
@@ -959,6 +1013,7 @@ public class GovernanceUtils {
                 ((EndpointImpl) endpoint).setLcName(artifactLC);
                 ((EndpointImpl) endpoint).setLcState(artifactLCState);
                 ((EndpointImpl) endpoint).setArtifactPath(artifactPath);
+                ((EndpointImpl) endpoint).setUniqueAttributes(uniqueAttributes);
                 if (artifactCache != null) {
                     artifactCache.addArtifact(artifactPath, endpoint);
                 }
@@ -994,6 +1049,7 @@ public class GovernanceUtils {
                                 }
                                 artifact.setLcState(artifactLCState);
                                 artifact.setLcName(artifactLC);
+                                artifact.setUniqueAttributes(uniqueAttributes);
                                 if (artifactCache != null) {
                                     artifactCache.addArtifact(artifactPath, artifact);
                                 }
@@ -1034,9 +1090,8 @@ public class GovernanceUtils {
             }*/
 
         } catch (RegistryException e) {
-            String msg =
-                    "Error in retrieving governance artifact by path. path: " + artifactPath + ".";
-            log.error(msg, e);
+            String msg = "Error in retrieving governance artifact by path. path: " + artifactPath + ".";
+            //log.error(msg, e);
             throw new GovernanceException(msg, e);
         }
         return null;
@@ -1389,10 +1444,11 @@ public class GovernanceUtils {
                 if (artifactAttributes != null) {
                     for (String artifactAttribute : artifactAttributes) {
                         String[] parts = artifactAttribute.split(":");
-                        output.addAll(fixExpressionForMultiplePaths(artifact,
-                                expression.replace("@{" + key + ":key}", parts[0]).replace(
-                                        "@{" + key + ":value}", parts[1])
-                        ));
+                        if (parts.length > 1) {
+                            output.addAll(fixExpressionForMultiplePaths(artifact,
+                                    expression.replace("@{" + key + ":key}", parts[0])
+                                            .replace("@{" + key + ":value}", parts[1])));
+                        }
                     }
                 }
                 break;
@@ -1636,6 +1692,14 @@ public class GovernanceUtils {
         GovernanceUtils.attributeSearchService = attributeSearchService;
     }
 
+    public static TermsSearchService getTermsSearchService() {
+        return termsSearchService;
+    }
+
+    public static void setTermsSearchService(TermsSearchService termsSearchService) {
+        GovernanceUtils.termsSearchService = termsSearchService;
+    }
+
     /**
      * Method to make an aspect to default.
      * @param path path of the resource
@@ -1674,7 +1738,11 @@ public class GovernanceUtils {
             StringBuilder builder = new StringBuilder();
             for (String referenceValue : e.getValue()) {
                 if (referenceValue != null && !"".equals(referenceValue)) {
-                    builder.append(referenceValue.toLowerCase()).append(",");
+                    String referenceValueModified = referenceValue;
+                    if(referenceValueModified.contains(" ")) {
+                        referenceValueModified = referenceValueModified.replace(" ", "\\ ");
+                    }
+                    builder.append(referenceValueModified.toLowerCase()).append(",");
                 }
             }
             if (builder.length() > 0) {
@@ -1707,6 +1775,226 @@ public class GovernanceUtils {
             throw new GovernanceException("Unable to search by attribute", e);
         }
         return artifacts;
+    }
+
+    /**
+     * @param criteria query string that should be searched for
+     * @param registry the governance registry instance
+     * @param mediaType media type to be matched for search. Media type can be specified in the query string too
+     * @return The list of artifacts. null if the media type and string is empty.
+     * @throws GovernanceException thrown when an error occurs
+     */
+    public static List<GovernanceArtifact> findGovernanceArtifacts(String criteria,
+                                                                   Registry registry, String mediaType)
+            throws GovernanceException {
+        Map<String, String> fields = new HashMap<String, String>();
+        Map<String, String> possibleProperties = new HashMap<String, String>();
+        GovernanceArtifactConfiguration artifactConfiguration;
+
+        if (mediaType != null && !"".equals(mediaType)) {
+            fields.put("mediaType", mediaType);
+        } else if("".equals(criteria)) {
+            return null;
+        }
+
+        try {
+            artifactConfiguration = findGovernanceArtifactConfigurationByMediaType(mediaType, registry);
+        } catch (RegistryException e) {
+            throw new GovernanceException(e);
+        }
+        List<String> possibleKeys = Arrays.asList("createdAfter", "createdBefore", "updatedAfter", "updatedBefore", "author", "author!", "associationType", "associationDest",
+                "updater", "updater!", "tags", "content", "mediaType", "mediaType!", "lcName", "lcState");
+
+        List<String> finalTempList = new ArrayList<>();
+        if (StringUtils.isNotEmpty(criteria)) {
+            String[] tempList = criteria.split("&");
+            for (int i = 0; i < tempList.length; i++) {
+                if (tempList[i].contains("=")) {
+                    finalTempList.add(tempList[i]);
+                } else {
+                    finalTempList.set(i - 1, finalTempList.get(i - 1) + "&" + tempList[i]);
+                }
+            }
+        }
+
+        for(String temp : finalTempList) {
+            String[] subParts = temp.split("=");
+            if(subParts.length != 2) {
+                String value = subParts[0].toLowerCase();
+                if(value.contains(" ")) {
+                    value = value.replace(" ", "\\ ");
+                }
+                fields.put("overview_name", value);
+            } else {
+                if(possibleKeys.contains(subParts[0])) {
+                    switch(subParts[0]) {
+                        case "author!":
+                            fields.put(subParts[0].substring(0, subParts[0].length() - 1), subParts[1].toLowerCase());
+                            fields.put("authorNameNegate", "on");
+                            break;
+                        case "updater!":
+                            fields.put(subParts[0].substring(0, subParts[0].length() - 1), subParts[1].toLowerCase());
+                            fields.put("updaterNameNegate", "on");
+                            break;
+                        case "mediaType!":
+                            fields.put(subParts[0].substring(0, subParts[0].length() - 1), subParts[1].toLowerCase());
+                            fields.put("mediaTypeNegate", "on");
+                            break;
+                        case "tags":
+                        case "associationDest":
+                            fields.put(subParts[0], subParts[1]);
+                            break;
+                        default:
+                            fields.put(subParts[0], subParts[1].toLowerCase());
+                            break;
+                    }
+                } else if(subParts[0].equals("comments")){
+                    fields.put("commentWords", subParts[1].toLowerCase());
+                } else {
+                    if(subParts[0].contains(":")) {
+                        String value = subParts[1].toLowerCase();
+                        if(value.contains(" ")) {
+                            value = value.replace(" ", "\\ ");
+                        }
+                        String[] tableParts = subParts[0].split(":");
+                        if ("overview".equals(tableParts[0])) {
+                            possibleProperties.put(tableParts[1], value);
+                        }
+                        fields.put(subParts[0].replace(":", "_"), value);
+                    } else {
+                        String value = subParts[1];
+                        if(value.contains(" ")) {
+                            value = value.replace(" ", "\\ ");
+                        }
+                        if(!subParts[0].equals("name")) {
+                            possibleProperties.put(subParts[0], value);
+                            fields.put(OVERVIEW + UNDERSCORE + subParts[0], value.toLowerCase());
+                        } else {
+                            if (artifactConfiguration != null) {
+                                fields.put(artifactConfiguration.getArtifactNameAttribute(), value.toLowerCase());
+                            } else {
+                                fields.put(OVERVIEW + UNDERSCORE + subParts[0], value.toLowerCase());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        List<GovernanceArtifact> attributeSearchResults = performAttributeSearch(fields, registry);
+
+        // Following check is done since Attribute Search service only has a way to search one property at a time
+        if(possibleProperties.size() == 1) {
+            for(Map.Entry<String, String> entry : possibleProperties.entrySet()) {
+                String propertyName = entry.getKey();
+                fields.remove("overview_" + propertyName);
+                fields.put("propertyName", propertyName);
+                fields.put("rightPropertyValue", entry.getValue());
+                fields.put("rightOp", "eq");
+            }
+
+            List<GovernanceArtifact> propertySearchResults = performAttributeSearch(fields, registry);
+
+            Set<GovernanceArtifact> set  = new TreeSet<>(new Comparator<GovernanceArtifact>() {
+                public int compare(GovernanceArtifact artifact1, GovernanceArtifact artifact2)
+                {
+                    return artifact1.getId().compareTo(artifact2.getId()) ;
+                }
+            });
+
+            set.addAll(attributeSearchResults);
+            set.addAll(propertySearchResults);
+
+            List<GovernanceArtifact> mergeListWithoutDuplicates = new ArrayList<>();
+            mergeListWithoutDuplicates.addAll(set);
+
+            return mergeListWithoutDuplicates;
+        }
+
+        return attributeSearchResults;
+    }
+
+    private static List<GovernanceArtifact> performAttributeSearch(Map<String, String> fields, Registry registry) throws GovernanceException {
+        if (getAttributeSearchService() == null) {
+            throw new GovernanceException("Attribute Search Service not Found");
+        }
+
+        List<GovernanceArtifact> artifacts = new ArrayList<GovernanceArtifact>();
+
+        try {
+            ResourceData[] results = getAttributeSearchService().search(fields);
+
+            int errorCount = 0; // We use this to check how many errors occurred.
+
+            for (ResourceData result : results) {
+                GovernanceArtifact governanceArtifact = null;
+                String path = result.getResourcePath().substring(RegistryConstants.GOVERNANCE_REGISTRY_BASE_PATH.length());
+                try {
+                    governanceArtifact = retrieveGovernanceArtifactByPath(registry, path);
+                } catch (GovernanceException e) {
+                    // We do not through any exception here. Only logging is done.
+                    // We increase the error count for each error. If all the paths failed, then we throw an error
+                    errorCount++;
+                    log.error("Error occurred while retrieving governance artifact by path : " + path, e);
+                }
+                if (governanceArtifact != null) {
+                    artifacts.add(governanceArtifact);
+                }
+            } if (errorCount != 0 && errorCount == results.length) {
+                // This means that all the paths have failed. So we throw an error.
+                throw new GovernanceException("Error occurred while retrieving all the governance artifacts");
+            }
+        } catch (RegistryException e) {
+            throw new GovernanceException("Unable to search by attribute", e);
+        }
+        return artifacts;
+    }
+
+    /**
+     * Find all possible terms and its count for the given facet field and query criteria
+     * @param criteria the filter criteria to be matched
+     * @param facetField field used for faceting : required
+     * @param mediaType artifact type need to filter : optional
+     * @param authRequired authorization required flag
+     * @return term results
+     * @throws GovernanceException
+     */
+    public static List<TermData> getTermDataList(Map<String, List<String>> criteria, String facetField, String mediaType, boolean authRequired) throws GovernanceException {
+        if (getTermsSearchService() == null) {
+            throw new GovernanceException("Term Search Service not Found");
+        }
+        Map<String, String> fields = new HashMap<>();
+        if (mediaType != null) {
+            fields.put(IndexingConstants.FIELD_MEDIA_TYPE, mediaType);
+        }
+        for (Map.Entry<String, List<String>> e : criteria.entrySet()) {
+            StringBuilder builder = new StringBuilder();
+            for (String referenceValue : e.getValue()) {
+                if (referenceValue != null && !"".equals(referenceValue)) {
+                    String referenceValueModified = referenceValue.replace(" ", "\\ ");
+                    builder.append(referenceValueModified.toLowerCase()).append(',');
+                }
+            }
+            if (builder.length() > 0) {
+                fields.put(e.getKey(), builder.substring(0, builder.length() - 1));
+            }
+        }
+        //set whether authorization is required for the facet search.
+        fields.put(IndexingConstants.AUTH_REQUIRED, String.valueOf(authRequired));
+
+        //setting the facet Field which needs grouping. Facet Field is required for searching.
+        if (facetField != null) {
+            fields.put(IndexingConstants.FACET_FIELD_NAME, facetField);
+        } else {
+            throw new GovernanceException("Facet field is required. field cannot be null");
+        }
+
+        try {
+            TermData[] termData = getTermsSearchService().search(fields);
+            return Arrays.asList(termData);
+        } catch (RegistryException e) {
+            throw new GovernanceException("Unable to get terms for the given field", e);
+        }
     }
 
      /**
@@ -2083,4 +2371,102 @@ public class GovernanceUtils {
         }
     }
 */
+
+    public static void removeArtifactFromPath(Registry registry, String path)
+            throws GovernanceException {
+        try {
+            if (registry.resourceExists(path)) {
+                registry.delete(path);
+            }
+            ArtifactCache artifactCache =
+                    ArtifactCacheManager.getCacheManager().getTenantArtifactCache(((UserRegistry) registry).getTenantId());
+            if (artifactCache != null && path != null && artifactCache.getArtifact(path) != null) {
+                artifactCache.invalidateArtifact(path);
+            }
+        } catch (RegistryException e) {
+            String msg = "Error in deleting the the artifact path:" + path + ".";
+            throw new GovernanceException(msg, e);
+        }
+    }
+
+    public static List<String> getUniqueAttributesNames(Registry registry,
+                                                        String mediaType) throws GovernanceException {
+        try {
+            GovernanceArtifactConfiguration configuration = findGovernanceArtifactConfigurationByMediaType(mediaType, registry);
+            if (configuration != null) {
+                return configuration.getUniqueAttributes();
+            }
+        } catch (RegistryException e) {
+            throw new GovernanceException(e);
+        }
+        return null;
+    }
+
+    /**
+     * Validates a given artifact to ensure all the mandatory fields are filled
+     * If a mandatory field is left empty this check method will throw an exception
+     * indicating field name to be filled.
+     *
+     * @param registry              the instance of the registry.
+     * @param elementString         the short name of the artifact type.
+     * @param artifact              artifact to be checked for mandatory fields.
+     * @throws GovernanceException
+     */
+    public static void CheckMandatoryFields(Registry registry, String elementString, GovernanceArtifact artifact)
+            throws GovernanceException {
+        if (artifact instanceof WsdlImpl || artifact instanceof SchemaImpl || artifact instanceof PolicyImpl) {
+            return;
+        }
+
+        GovernanceArtifactConfiguration configuration = null;
+        try {
+            configuration = GovernanceUtils.findGovernanceArtifactConfiguration(elementString, registry);
+        } catch (RegistryException e) {
+            throw new GovernanceException("Retrieving RXT configuration for type :" + elementString + "failed.", e);
+        }
+
+        if (configuration == null) {
+            throw new GovernanceException("Could not find RXT configuration for type :" + elementString);
+        }
+
+        List<Map> mandatoryAttributes = configuration.getMandatoryAttributes();
+
+        if (mandatoryAttributes == null) {
+            return;
+        }
+        Map<String, Object> map;
+        for (int i = 0; i < mandatoryAttributes.size(); ++i) {
+            map = mandatoryAttributes.get(i);
+            String prop = (String) map.get("properties");
+            List<String> keys = (List<String>) map.get("keys");
+
+            if (prop != null && "unbounded".equals(prop)) {
+                //assume there are only 1 key
+                String[] values = artifact.getAttributes((String) keys.get(0));
+                if (values != null) {
+                    for (int j = 0; j < values.length; ++j) {
+                        if (values[j] == null || "".equals(values[j])) {
+                            //return an exception to stop adding artifact
+                            throw new GovernanceException((String) map.get("name") + " is a required field, " +
+                                                          "Please provide a value for this parameter.");
+                        }
+                    }
+                }
+            } else {
+                String value = "";
+                for (int j = 0; j < keys.size(); ++j) {
+                    String v = artifact.getAttribute(keys.get(j));
+                    if (j != 0) {
+                        value += ":";
+                    }
+                    value += (v == null ? "" : v);
+                }
+                if (value == null || "".equals(value)) {
+                    //return an exception to stop adding artifact
+                    throw new GovernanceException((String) map.get("name") + " is a required field, " +
+                                                  "Please provide a value for this parameter.");
+                }
+            }
+        }
+    }
 }
